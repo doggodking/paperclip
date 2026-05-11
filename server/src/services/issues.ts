@@ -126,6 +126,7 @@ export interface IssueFilters {
   touchedByUserId?: string;
   inboxArchivedByUserId?: string;
   unreadForUserId?: string;
+  pendingInteractionForUserId?: string;
   projectId?: string;
   workspaceId?: string;
   executionWorkspaceId?: string;
@@ -565,6 +566,43 @@ function unreadForUserCondition(companyId: string, userId: string) {
             OR ${issueComments.authorUserId} <> ${userId}
           )
           AND ${issueComments.createdAt} > ${myLastTouchAt}
+      )
+    )
+  `;
+}
+
+function pendingInteractionCountForUserExpr(companyId: string, userId: string | null) {
+  if (!userId) {
+    return sql<number>`0`;
+  }
+  // NOTE: drizzle renders column refs unqualified inside SELECT-position
+  // subqueries; aliasing the inner table (`ti`) and qualifying the outer
+  // `issues` columns via sql.raw avoids ambiguity (issue_thread_interactions
+  // also has columns named id, company_id, status).
+  return sql<number>`
+    CASE
+      WHEN "issues"."assignee_user_id" = ${userId} THEN (
+        SELECT COUNT(*)::int
+        FROM ${issueThreadInteractions} ti
+        WHERE ti.issue_id = "issues"."id"
+          AND ti.company_id = ${companyId}
+          AND ti.status = 'pending'
+      )
+      ELSE 0
+    END
+  `;
+}
+
+function pendingInteractionForUserCondition(companyId: string, userId: string) {
+  return sql<boolean>`
+    (
+      ${issues.assigneeUserId} = ${userId}
+      AND EXISTS (
+        SELECT 1
+        FROM ${issueThreadInteractions}
+        WHERE ${issueThreadInteractions.issueId} = ${issues.id}
+          AND ${issueThreadInteractions.companyId} = ${companyId}
+          AND ${issueThreadInteractions.status} = 'pending'
       )
     )
   `;
@@ -2236,6 +2274,7 @@ export function issueService(db: Db) {
       const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
       const inboxArchivedByUserId = filters?.inboxArchivedByUserId?.trim() || undefined;
       const unreadForUserId = filters?.unreadForUserId?.trim() || undefined;
+      const pendingInteractionForUserId = filters?.pendingInteractionForUserId?.trim() || undefined;
       const contextUserId = unreadForUserId ?? touchedByUserId ?? inboxArchivedByUserId;
       const includeBlockedBy = filters?.includeBlockedBy === true;
       const rawSearch = filters?.q?.trim() ?? "";
@@ -2297,6 +2336,9 @@ export function issueService(db: Db) {
       if (unreadForUserId) {
         conditions.push(unreadForUserCondition(companyId, unreadForUserId));
       }
+      if (pendingInteractionForUserId) {
+        conditions.push(pendingInteractionForUserCondition(companyId, pendingInteractionForUserId));
+      }
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
       if (filters?.workspaceId) {
         conditions.push(or(
@@ -2350,8 +2392,13 @@ export function issueService(db: Db) {
         END
       `;
       const canonicalLastActivityAt = issueCanonicalLastActivityAtExpr(companyId);
+      const pendingInteractionCountUserId =
+        pendingInteractionForUserId ?? filters?.assigneeUserId ?? contextUserId ?? null;
       const baseQuery = db
-        .select(issueListSelect)
+        .select({
+          ...issueListSelect,
+          pendingInteractionCount: pendingInteractionCountForUserExpr(companyId, pendingInteractionCountUserId),
+        })
         .from(issues)
         .where(and(...conditions))
         .orderBy(
@@ -2367,6 +2414,7 @@ export function issueService(db: Db) {
       const rows = (await pageQuery).map((row) => ({
         ...row,
         description: decodeDatabaseTextPreview(row.description, ISSUE_LIST_DESCRIPTION_MAX_CHARS),
+        pendingInteractionCount: Number(row.pendingInteractionCount ?? 0),
       }));
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);

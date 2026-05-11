@@ -1367,6 +1367,7 @@ export function issueRoutes(
     const touchedByUserFilterRaw = req.query.touchedByUserId as string | undefined;
     const inboxArchivedByUserFilterRaw = req.query.inboxArchivedByUserId as string | undefined;
     const unreadForUserFilterRaw = req.query.unreadForUserId as string | undefined;
+    const pendingInteractionForUserFilterRaw = req.query.pendingInteractionForUserId as string | undefined;
     const assigneeUserId =
       assigneeUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
@@ -1383,6 +1384,10 @@ export function issueRoutes(
       unreadForUserFilterRaw === "me" && req.actor.type === "board"
         ? req.actor.userId
         : unreadForUserFilterRaw;
+    const pendingInteractionForUserId =
+      pendingInteractionForUserFilterRaw === "me" && req.actor.type === "board"
+        ? req.actor.userId
+        : pendingInteractionForUserFilterRaw;
     const rawLimit = req.query.limit as string | undefined;
     const parsedLimit = rawLimit !== undefined && /^\d+$/.test(rawLimit)
       ? Number.parseInt(rawLimit, 10)
@@ -1409,6 +1414,13 @@ export function issueRoutes(
       res.status(403).json({ error: "unreadForUserId=me requires board authentication" });
       return;
     }
+    if (
+      pendingInteractionForUserFilterRaw === "me" &&
+      (!pendingInteractionForUserId || req.actor.type !== "board")
+    ) {
+      res.status(403).json({ error: "pendingInteractionForUserId=me requires board authentication" });
+      return;
+    }
     if (rawLimit !== undefined && (parsedLimit === null || !Number.isInteger(parsedLimit) || parsedLimit <= 0)) {
       res.status(400).json({ error: `limit must be a positive integer up to ${ISSUE_LIST_MAX_LIMIT}` });
       return;
@@ -1427,6 +1439,7 @@ export function issueRoutes(
       touchedByUserId,
       inboxArchivedByUserId,
       unreadForUserId,
+      pendingInteractionForUserId,
       projectId: req.query.projectId as string | undefined,
       workspaceId: req.query.workspaceId as string | undefined,
       executionWorkspaceId: req.query.executionWorkspaceId as string | undefined,
