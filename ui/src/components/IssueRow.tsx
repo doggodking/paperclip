@@ -102,6 +102,16 @@ export function IssueRow({
       Blocked by parked work
     </span>
   ) : null;
+  const pendingInteractionCount = issue.pendingInteractionCount ?? 0;
+  const pendingInteractionIndicator = pendingInteractionCount > 0 ? (
+    <span
+      data-testid="issue-row-pending-interaction"
+      className="ml-1.5 inline-flex shrink-0 items-center rounded-full border border-orange-500/60 bg-orange-500/15 px-2 py-0.5 text-[10px] font-medium text-orange-700 dark:text-orange-300"
+      title={`결정 대기 ${pendingInteractionCount}건 — 오너 응답을 기다리는 인터랙션이 있습니다.`}
+    >
+      결정 대기 {pendingInteractionCount}건
+    </span>
+  ) : null;
 
   return (
     <Link
@@ -125,6 +135,7 @@ export function IssueRow({
         {productivityReviewIndicator}
         {planningModeIndicator}
         {parkedBlockerIndicator}
+        {pendingInteractionIndicator}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
         <span className={cn("line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none", titleClassName)}>
@@ -151,6 +162,7 @@ export function IssueRow({
               </span>
               {planningModeIndicator}
               {parkedBlockerIndicator}
+              {pendingInteractionIndicator}
             </>
           )}
           {mobileMeta ? (
