@@ -44,6 +44,7 @@ import {
 } from "@paperclipai/db";
 import { conflict, HttpError, notFound } from "../errors.js";
 import { applyCompanyQuotaPause } from "./company-quota-pause.js";
+import { fireCompanyQuotaPauseAlert } from "./company-quota-alert.js";
 import { logger } from "../middleware/logger.js";
 import { publishLiveEvent } from "./live-events.js";
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
@@ -7956,6 +7957,49 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 applied: pauseResult.applied,
               },
             });
+            // ADR-001 D5 (P-3) — fire owner alert (issue + optional email +
+            // activity_log). Wrapped in try/catch so a notification failure
+            // never blocks the post-run dispatcher work that has to wind down
+            // the run record.
+            if (pauseResult.applied) {
+              try {
+                const alert = await fireCompanyQuotaPauseAlert({
+                  db,
+                  companyId: agent.companyId,
+                  pausedUntil: pauseResult.pausedUntil,
+                  pausedReason: pauseResult.pausedReason,
+                  runId: livenessRun.id,
+                  resetAt: quotaContract.resetAt,
+                  signal: null,
+                });
+                await appendRunEvent(livenessRun, await nextRunEventSeq(livenessRun.id), {
+                  eventType: "lifecycle",
+                  stream: "system",
+                  level: alert.issueCreated || alert.emailSent ? "info" : "warn",
+                  message: alert.issueCreated
+                    ? `Quota pause alert created issue ${alert.issueId}`
+                    : "Quota pause alert: no issue created (deduped or owner missing)",
+                  payload: {
+                    errorFamily: "quota_exhausted",
+                    issueId: alert.issueId,
+                    issueCreated: alert.issueCreated,
+                    emailSent: alert.emailSent,
+                    emailSkippedReason: alert.emailSkippedReason,
+                    ownerUserId: alert.ownerUserId,
+                  },
+                });
+              } catch (alertError) {
+                await appendRunEvent(livenessRun, await nextRunEventSeq(livenessRun.id), {
+                  eventType: "lifecycle",
+                  stream: "system",
+                  level: "warn",
+                  message: `Quota pause alert failed: ${alertError instanceof Error ? alertError.message : String(alertError)}`,
+                  payload: {
+                    errorFamily: "quota_exhausted",
+                  },
+                });
+              }
+            }
           } else if (readTransientRecoveryContractFromRun(livenessRun)) {
             await scheduleBoundedRetryForRun(livenessRun, agent);
           }
