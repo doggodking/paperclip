@@ -1,4 +1,11 @@
-import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+
+export type CompanyNotificationChannels = {
+  owner_alerts?: {
+    email?: string;
+    issue_parent_id?: string;
+  };
+};
 
 export const companies = pgTable(
   "companies",
@@ -18,6 +25,12 @@ export const companies = pgTable(
     pausedUntil: timestamp("paused_until", { withTimezone: true }),
     pausedReason: text("paused_reason"),
     pausedCanaryAt: timestamp("paused_canary_at", { withTimezone: true }),
+    // ADR-001 D5 (P-3): owner alert routing for quota auto-pause events.
+    // NULL = no channels configured (graceful degradation). Shape is jsonb so
+    // slack/webhook can be added later without further migrations. Today
+    // services/company-quota-alert.ts reads `owner_alerts.email` (string)
+    // and `owner_alerts.issue_parent_id` (uuid string).
+    notificationChannels: jsonb("notification_channels").$type<CompanyNotificationChannels>(),
     issuePrefix: text("issue_prefix").notNull().default("PAP"),
     issueCounter: integer("issue_counter").notNull().default(0),
     budgetMonthlyCents: integer("budget_monthly_cents").notNull().default(0),
