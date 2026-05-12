@@ -334,6 +334,7 @@ describe("inbox helpers", () => {
       failedRuns: 2,
       joinRequests: 1,
       mineIssues: 1,
+      pendingInteractions: 0,
       alerts: 1,
     });
   });
@@ -356,8 +357,49 @@ describe("inbox helpers", () => {
       failedRuns: 0,
       joinRequests: 0,
       mineIssues: 0,
+      pendingInteractions: 0,
       alerts: 0,
     });
+  });
+
+  it("sums pendingInteractionCount across mine issues into the inbox badge", () => {
+    const read = makeIssue("1", false);
+    read.pendingInteractionCount = 2;
+    const unread = makeIssue("2", true);
+    unread.pendingInteractionCount = 1;
+    const noPending = makeIssue("3", false);
+
+    const result = computeInboxBadgeData({
+      approvals: [],
+      joinRequests: [],
+      dashboard,
+      heartbeatRuns: [],
+      mineIssues: [read, unread, noPending],
+      dismissedAlerts: new Set<string>(["alert:budget", "alert:agent-errors"]),
+      dismissedAtByKey: new Map(),
+      currentUserId: "user-1",
+    });
+
+    // 1 unread mine issue + 3 pending interactions (across all mine issues regardless of read state)
+    expect(result.mineIssues).toBe(1);
+    expect(result.pendingInteractions).toBe(3);
+    expect(result.inbox).toBe(4);
+  });
+
+  it("treats missing pendingInteractionCount as zero in the badge sum", () => {
+    const result = computeInboxBadgeData({
+      approvals: [],
+      joinRequests: [],
+      dashboard,
+      heartbeatRuns: [],
+      mineIssues: [makeIssue("1", false), makeIssue("2", true)],
+      dismissedAlerts: new Set<string>(["alert:budget", "alert:agent-errors"]),
+      dismissedAtByKey: new Map(),
+      currentUserId: "user-1",
+    });
+
+    expect(result.pendingInteractions).toBe(0);
+    expect(result.inbox).toBe(1);
   });
 
   it("excludes read mine issues from the inbox badge count", () => {

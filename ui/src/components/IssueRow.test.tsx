@@ -288,6 +288,38 @@ describe("IssueRow", () => {
     });
   });
 
+  it("renders the pending-interaction chip when pendingInteractionCount is positive", () => {
+    const root = createRoot(container);
+    const issue = createIssue({ pendingInteractionCount: 2 });
+
+    act(() => {
+      root.render(<IssueRow issue={issue} />);
+    });
+
+    const chips = container.querySelectorAll('[data-testid="issue-row-pending-interaction"]');
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips[0]?.textContent).toContain("결정 대기 2건");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("omits the pending-interaction chip when pendingInteractionCount is zero or missing", () => {
+    const root = createRoot(container);
+    const issue = createIssue({ pendingInteractionCount: 0 });
+
+    act(() => {
+      root.render(<IssueRow issue={issue} />);
+    });
+
+    expect(container.querySelector('[data-testid="issue-row-pending-interaction"]')).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("does not show the parked-work badge when assigned blocker is not in backlog", () => {
     const root = createRoot(container);
     const issue = createIssue({

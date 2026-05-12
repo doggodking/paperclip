@@ -80,6 +80,7 @@ export interface InboxBadgeData {
   failedRuns: number;
   joinRequests: number;
   mineIssues: number;
+  pendingInteractions: number;
   alerts: number;
 }
 
@@ -1237,6 +1238,10 @@ export function computeInboxBadgeData({
     (jr) => !isInboxEntityDismissed(dismissedAtByKey, `join:${jr.id}`, jr.updatedAt ?? jr.createdAt),
   ).length;
   const visibleMineIssues = mineIssues.filter((issue) => issue.isUnreadForMe).length;
+  const pendingInteractionsForMeCount = mineIssues.reduce(
+    (total, issue) => total + Math.max(0, issue.pendingInteractionCount ?? 0),
+    0,
+  );
   const agentErrorCount = dashboard?.agents.error ?? 0;
   const monthBudgetCents = dashboard?.costs.monthBudgetCents ?? 0;
   const monthUtilizationPercent = dashboard?.costs.monthUtilizationPercent ?? 0;
@@ -1252,11 +1257,17 @@ export function computeInboxBadgeData({
 
   return {
     // The inbox badge reflects personal/actionable work, not company-wide health alerts.
-    inbox: actionableApprovals + visibleJoinRequests + failedRuns + visibleMineIssues,
+    inbox:
+      actionableApprovals
+      + visibleJoinRequests
+      + failedRuns
+      + visibleMineIssues
+      + pendingInteractionsForMeCount,
     approvals: actionableApprovals,
     failedRuns,
     joinRequests: visibleJoinRequests,
     mineIssues: visibleMineIssues,
+    pendingInteractions: pendingInteractionsForMeCount,
     alerts,
   };
 }
