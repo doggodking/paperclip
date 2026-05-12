@@ -317,6 +317,10 @@ export async function fireCompanyQuotaPauseAlert(
     }
   }
 
+  // Note: we keep runId in `details` rather than activity_log.run_id so the
+  // alert is not coupled to the heartbeat_runs FK; that lets backfill /
+  // replay tools insert quota alert rows without first reconstructing run
+  // records, and avoids a CASCADE-on-delete tying alert history to run rows.
   await logActivity(db, {
     companyId,
     actorType: "system",
@@ -324,7 +328,6 @@ export async function fireCompanyQuotaPauseAlert(
     action: QUOTA_PAUSE_ALERT_ACTIVITY_ACTION,
     entityType: "company",
     entityId: companyId,
-    runId,
     details: {
       pausedUntil: pausedUntil.toISOString(),
       pausedReason,
