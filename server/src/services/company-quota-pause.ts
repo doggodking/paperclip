@@ -64,25 +64,59 @@ export interface ApplyCompanyQuotaPauseInput {
   runId: string;
   /** Extra wall-clock buffer beyond the reset moment. Defaults to 2 minutes per ADR-001 D3. */
   graceMs?: number;
+  /**
+   * ADR-001 D4 — when the company is currently in the canary probe window
+   * (`paused_canary_at IS NOT NULL`), widen `paused_until` to at least
+   * `now + conservativeOnCanaryMs` so a back-to-back quota failure cannot land
+   * on a too-narrow reset window. `paused_canary_at` itself is left intact so
+   * the canary latch still triggers a single probe at the next expiry.
+   */
+  conservativeOnCanaryMs?: number;
 }
 
 export interface ApplyCompanyQuotaPauseResult {
   applied: boolean;
   pausedUntil: Date;
   pausedReason: string;
+  /** True when the conservative-on-canary widening kicked in (ADR-001 D4). */
+  conservativeApplied: boolean;
 }
 
 /**
  * Sets `paused_until` and `paused_reason` on the company in one statement,
  * keyed on the new `pausedUntil` only being later than the current one (so
  * concurrent quota signals don't shorten an existing pause window). ADR-001 D3.
+ *
+ * When the company is in the canary probe window
+ * (`paused_canary_at IS NOT NULL`) and `conservativeOnCanaryMs` is supplied,
+ * the new `paused_until` is widened to `max(resetAt + grace, now + conservative)`
+ * so a canary-time re-failure cannot leave a too-narrow next-attempt window
+ * (ADR-001 D4).
  */
 export async function applyCompanyQuotaPause(
   input: ApplyCompanyQuotaPauseInput,
 ): Promise<ApplyCompanyQuotaPauseResult> {
   const graceMs = input.graceMs ?? DEFAULT_GRACE_MS;
-  const pausedUntil = new Date(input.resetAt.getTime() + graceMs);
+  const basePausedUntil = new Date(input.resetAt.getTime() + graceMs);
   const pausedReason = `claude_quota_exhausted:${input.runId}`;
+
+  let pausedUntil = basePausedUntil;
+  let conservativeApplied = false;
+  if (input.conservativeOnCanaryMs && input.conservativeOnCanaryMs > 0) {
+    const currentRow = await input.db
+      .select({ pausedCanaryAt: companies.pausedCanaryAt })
+      .from(companies)
+      .where(eq(companies.id, input.companyId))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (currentRow?.pausedCanaryAt) {
+      const conservativeUntil = new Date(Date.now() + input.conservativeOnCanaryMs);
+      if (conservativeUntil.getTime() > pausedUntil.getTime()) {
+        pausedUntil = conservativeUntil;
+        conservativeApplied = true;
+      }
+    }
+  }
 
   const result = await input.db
     .update(companies)
@@ -106,6 +140,7 @@ export async function applyCompanyQuotaPause(
     applied: result.length > 0,
     pausedUntil,
     pausedReason,
+    conservativeApplied,
   };
 }
 
