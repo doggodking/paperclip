@@ -1,5 +1,7 @@
 import { Router, type Request } from "express";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { companies } from "@paperclipai/db";
 import {
   DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION,
   companyPortabilityExportSchema,
@@ -375,6 +377,71 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       details: req.body,
     });
     res.json(company);
+  });
+
+  // ADR-001 D4 — manual unpause for a quota-driven auto-pause window.
+  // Human users (board sessions, owner) only — agent tokens get 403 even when
+  // they would otherwise pass `assertCompanyAccess`. Required body: { reason }.
+  router.post("/:companyId/unpause", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    if (req.actor.type !== "board") {
+      throw forbidden("Only human users can manually unpause a company");
+    }
+    assertCompanyAccess(req, companyId);
+
+    const rawReason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (rawReason.length === 0) {
+      throw badRequest("reason is required");
+    }
+
+    const previous = await db
+      .select({
+        id: companies.id,
+        pausedUntil: companies.pausedUntil,
+        pausedReason: companies.pausedReason,
+        pausedCanaryAt: companies.pausedCanaryAt,
+      })
+      .from(companies)
+      .where(eq(companies.id, companyId))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+
+    if (!previous) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+
+    const clearedAt = new Date();
+    await db
+      .update(companies)
+      .set({
+        pausedUntil: null,
+        pausedReason: null,
+        pausedCanaryAt: null,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(companies.id, companyId));
+
+    await logActivity(db, {
+      companyId,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      action: "company.quota_pause_cleared",
+      entityType: "company",
+      entityId: companyId,
+      details: {
+        reason: rawReason,
+        previousPausedUntil: previous.pausedUntil ? previous.pausedUntil.toISOString() : null,
+        previousPausedReason: previous.pausedReason,
+        previousPausedCanaryAt: previous.pausedCanaryAt ? previous.pausedCanaryAt.toISOString() : null,
+      },
+    });
+
+    res.json({
+      ok: true,
+      companyId,
+      clearedAt: clearedAt.toISOString(),
+    });
   });
 
   router.post("/:companyId/archive", async (req, res) => {

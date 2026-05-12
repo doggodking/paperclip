@@ -44,7 +44,10 @@ import {
 } from "@paperclipai/db";
 import { conflict, HttpError, notFound } from "../errors.js";
 import { applyCompanyQuotaPause } from "./company-quota-pause.js";
+import { evaluateCanaryGate } from "./company-quota-canary.js";
 import { logger } from "../middleware/logger.js";
+
+const QUOTA_PAUSE_CONSERVATIVE_GRACE_MS = 30 * 60 * 1000;
 import { publishLiveEvent } from "./live-events.js";
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
 import { getServerAdapter, listAdapterModelProfiles, runningProcesses } from "../adapters/index.js";
@@ -7940,6 +7943,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               companyId: agent.companyId,
               resetAt: quotaContract.resetAt,
               runId: livenessRun.id,
+              // ADR-001 D4: if this failure happened inside a canary probe,
+              // widen the next pause to at least now + 30min so we don't
+              // immediately retry on a narrow reset window.
+              conservativeOnCanaryMs: QUOTA_PAUSE_CONSERVATIVE_GRACE_MS,
             });
             await appendRunEvent(livenessRun, await nextRunEventSeq(livenessRun.id), {
               eventType: "lifecycle",
@@ -7954,6 +7961,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                 pausedReason: pauseResult.pausedReason,
                 resetAt: quotaContract.resetAt.toISOString(),
                 applied: pauseResult.applied,
+                conservativeApplied: pauseResult.conservativeApplied,
               },
             });
           } else if (readTransientRecoveryContractFromRun(livenessRun)) {
@@ -8660,6 +8668,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         scopeType: budgetBlock.scopeType,
         scopeId: budgetBlock.scopeId,
       });
+    }
+
+    // ADR-001 D4: quota-pause canary gate. Skip wakes for non-canary agents
+    // while the company is in an active pause window or the canary probe is
+    // in flight.
+    const canaryGate = await evaluateCanaryGate(db, agent.companyId, agentId);
+    if (canaryGate.decision === "skip") {
+      await writeSkippedRequest(
+        canaryGate.reason === "in_pause_window"
+          ? "company.quota_pause.in_window"
+          : "company.quota_pause.canary_only",
+      );
+      return null;
     }
 
     if (
