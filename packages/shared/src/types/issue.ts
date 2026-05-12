@@ -388,6 +388,7 @@ export interface Issue {
   lastExternalCommentAt?: Date | null;
   lastActivityAt?: Date | null;
   isUnreadForMe?: boolean;
+  pendingInteractionCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
